@@ -1,0 +1,132 @@
+from INA219 import INA219
+import machine
+import time
+import os
+import sys
+
+# LED control with stop button handling
+led = machine.Pin(22, machine.Pin.OUT)
+led.off()
+
+#running = True
+
+def test_running():
+  global running  # Use global keyword to modify the variable in main scope
+  led.on()
+  running = True  # Set running flag to True when test starts
+
+def test_complete():
+  global running
+  led.off()
+  running = False  # Set running flag to False when test stops
+
+# I2C bus initialization
+sda = machine.Pin(4)
+sda1 = machine.Pin(18)
+scl = machine.Pin(5)
+scl1 = machine.Pin(19)
+i2c = machine.I2C(0, sda=sda, scl=scl, freq=400000)
+i2c1 = machine.I2C(1, sda=sda1, scl=scl1, freq=400000)
+
+# Button pins (replace with your button pins if different)
+amber = machine.Pin(6)
+green = machine.Pin(7)
+red = machine.Pin(8)
+
+# INA219 sensor objects
+red.init(machine.Pin.IN)
+green.init(machine.Pin.IN)
+amber.init(machine.Pin.IN)
+currentSensor = INA219(i2c)
+currentSensor1 = INA219(i2c1)
+currentSensor.set_calibration_16V_400mA()
+currentSensor1.set_calibration_16V_400mA()
+
+def readVsys():
+  adc_Vsys = machine.ADC(29)
+  Vsys = adc_Vsys.read_u16() * 3.0 * 3.3 / 65535
+  return Vsys
+
+# Open the CSV file for writing in append mode ('a')
+file = open("sensor_log.csv", "a")
+
+# Write header row if the file is empty
+stat_result = os.stat("sensor_log.csv")
+file_size = stat_result[6]  # Access the 7th element (index 6) which holds the file size
+
+# Write header row if the file is empty
+if file_size == 0:
+  file.write("timestamp,current,bus_voltage,power,color,vcheck,vcheck1,current1, bus_voltage1,power1\n")
+
+# Flag to control program termination
+running = True
+
+test_running()  # Turn on LED at program start
+try:
+  while True:
+    # Get current timestamp
+    timestamp = time.localtime()
+    year, month, day, hour, minute, second, *_ = timestamp
+    timestamp_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(year, month, day, hour, minute, second)
+
+    vsysVoltage = readVsys()
+    current = currentSensor.current
+    current1 = currentSensor1.current
+    busVoltage = currentSensor.bus_voltage
+    busVoltage1 = currentSensor1.bus_voltage
+    shuntVoltage = currentSensor.shunt_voltage * 1000
+    power = current * busVoltage
+    power1 = current1 * busVoltage1
+
+    color = "None"
+    vcheck = vcheck1 = "NA"
+
+    # ... your color and voltage check logic here
+    if red.value() < 0.15:
+      color = "red"
+    if green.value() < 0.15:
+      color = "green"
+    if amber.value() < 0.15 :
+      color = "amber"
+      
+    if color == "red":
+      if (6.05<busVoltage<6.9):
+          vcheck = "pass"
+      else:
+          vcheck = "fail"
+      if (6.05<busVoltage1<6.9):
+          vcheck1 = "pass"
+      else:
+          vcheck1 = "fail"
+    if color == "amber":
+      if (8.3<busVoltage<9.25):
+          vcheck = "pass"
+      else:
+          vcheck = "fail"
+      if (8.3<busVoltage1<9.25):
+          vcheck1 = "pass"
+      else:
+          vcheck1 = "fail"
+    if color == "green":
+      if (8.15<busVoltage<8.7):
+          vcheck = "pass"
+      else:
+          vcheck = "fail"
+      if (8.15<busVoltage1<8.7):
+          vcheck1 = "pass"
+      else:
+          vcheck1 = "fail"
+
+    # Write data to CSV file
+    data_string = f"{timestamp_str},{current},{busVoltage},{power}, {color},{vcheck},{vcheck1},{current1},{busVoltage1},{power}\n"
+    file.write(data_string)
+    file.flush()  # Flush the write buffer to ensure data is saved
+
+    time.sleep(1)
+
+# Close the CSV file after exiting the loop
+except KeyboardInterrupt:
+    led.off()
+    #running = False;
+finally:
+  file.close()  # Ensure the file is closed even if an exception occurs
